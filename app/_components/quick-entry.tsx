@@ -1,12 +1,18 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { createEntryFromText } from "../actions/entries";
+import { parseEntry } from "@/lib/parse-entry";
+import { IconBolt, IconSparkle } from "./icon";
 
-export function QuickEntry() {
+const KNOWN = ["Acme Redesign", "Internal Ops", "Globex API"]; // visual hint only; server validates
+
+export function QuickEntry({ projectNames = KNOWN }: { projectNames?: string[] }) {
   const [input, setInput] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
   const [pending, start] = useTransition();
+
+  const preview = useMemo(() => (input.trim() ? parseEntry(input, projectNames) : null), [input, projectNames]);
 
   return (
     <form
@@ -17,7 +23,7 @@ export function QuickEntry() {
         start(async () => {
           try {
             const res = await createEntryFromText(input);
-            setFeedback(`Logged ${res.minutes}m to ${res.project}`);
+            setFeedback(`✓ Logged ${res.minutes}m to ${res.project}`);
             setInput("");
           } catch (err) {
             setFeedback(err instanceof Error ? err.message : "Failed");
@@ -25,25 +31,66 @@ export function QuickEntry() {
         });
       }}
     >
-      <textarea
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        placeholder="2h on Acme redesign — pushed the nav refactor"
-        className="min-h-20 rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 text-sm outline-none focus:border-zinc-600"
-      />
-      <div className="flex items-center justify-between">
-        <button
-          type="submit"
-          disabled={pending || !input.trim()}
-          className="rounded-md bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 disabled:opacity-40"
-        >
-          {pending ? "Logging…" : "Log it"}
-        </button>
-        {feedback && <span className="text-xs text-zinc-400">{feedback}</span>}
+      <div className="surface relative p-1.5">
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="2h on Acme redesign — pushed the nav refactor"
+          className="min-h-24 w-full resize-none bg-transparent p-3 text-sm outline-none placeholder:text-[var(--color-dim)]"
+        />
+        <div className="flex items-center gap-2 border-t border-[color-mix(in_oklch,var(--color-line)_70%,transparent)] px-3 py-2">
+          <IconSparkle className="text-[var(--color-brand-soft)]" size={14} />
+          <span className="text-[11px] uppercase tracking-[0.2em] text-[var(--color-dim)]">Recognised</span>
+          {preview ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Chip on={preview.durationMinutes > 0}>{preview.durationMinutes || 0}m</Chip>
+              <Chip on={!!preview.projectHint}>{preview.projectHint ?? "no project"}</Chip>
+              <Chip on={!preview.billable} tone="violet">
+                {preview.billable ? "billable" : "non-billable"}
+              </Chip>
+            </div>
+          ) : (
+            <span className="text-xs text-[var(--color-dim)]">
+              Try <code className="font-mono">2h</code>, <code className="font-mono">90m</code>, <code className="font-mono">1:30</code>, project name, <code className="font-mono">non-billable</code>.
+            </span>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            {feedback && <span className="text-xs text-[var(--color-muted)]">{feedback}</span>}
+            <button type="submit" disabled={pending || !input.trim()} className="btn btn-primary">
+              <IconBolt size={14} />
+              {pending ? "Logging…" : "Log it"}
+            </button>
+          </div>
+        </div>
       </div>
-      <p className="text-xs text-zinc-500">
-        Recognised: <code className="text-zinc-400">2h</code>, <code className="text-zinc-400">90m</code>, <code className="text-zinc-400">1:30</code>, project name, <code className="text-zinc-400">non-billable</code>.
-      </p>
     </form>
+  );
+}
+
+function Chip({
+  children,
+  on,
+  tone = "brand",
+}: {
+  children: React.ReactNode;
+  on: boolean;
+  tone?: "brand" | "violet";
+}) {
+  const accent = tone === "violet" ? "var(--color-violet)" : "var(--color-brand)";
+  return (
+    <span
+      className="chip"
+      style={
+        on
+          ? {
+              background: `color-mix(in oklch, ${accent} 18%, transparent)`,
+              borderColor: `color-mix(in oklch, ${accent} 45%, transparent)`,
+              color: `color-mix(in oklch, ${accent} 80%, white)`,
+            }
+          : undefined
+      }
+    >
+      {children}
+    </span>
   );
 }

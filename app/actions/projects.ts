@@ -1,10 +1,10 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { db, schema } from "@/lib/db";
-import { ensureSeeded } from "@/lib/db/seed";
+import { requireUser } from "@/lib/auth";
 
 export async function createProject(input: {
   clientId: string;
@@ -13,7 +13,14 @@ export async function createProject(input: {
   hourlyRate?: number;
   billable: boolean;
 }) {
-  ensureSeeded();
+  const user = await requireUser();
+  const owned = db
+    .select({ id: schema.clients.id })
+    .from(schema.clients)
+    .where(and(eq(schema.clients.id, input.clientId), eq(schema.clients.ownerId, user.id)))
+    .get();
+  if (!owned) throw new Error("Client not found.");
+
   db.insert(schema.projects)
     .values({
       id: randomUUID(),
@@ -29,11 +36,11 @@ export async function createProject(input: {
 }
 
 export async function createClient(input: { name: string; currency?: string }) {
-  ensureSeeded();
+  const user = await requireUser();
   db.insert(schema.clients)
     .values({
       id: randomUUID(),
-      ownerId: "default-user",
+      ownerId: user.id,
       name: input.name,
       currency: input.currency ?? "USD",
     })
@@ -42,13 +49,17 @@ export async function createClient(input: { name: string; currency?: string }) {
 }
 
 export async function toggleArchiveProject(id: string) {
+  const user = await requireUser();
   const row = db
-    .select({ archivedAt: schema.projects.archivedAt })
+    .select({ archivedAt: schema.projects.archivedAt, ownerId: schema.clients.ownerId })
     .from(schema.projects)
+    .innerJoin(schema.clients, eq(schema.projects.clientId, schema.clients.id))
     .where(eq(schema.projects.id, id))
     .get();
+  if (!row || row.ownerId !== user.id) throw new Error("Project not found.");
+
   db.update(schema.projects)
-    .set({ archivedAt: row?.archivedAt ? null : new Date() })
+    .set({ archivedAt: row.archivedAt ? null : new Date() })
     .where(eq(schema.projects.id, id))
     .run();
   revalidatePath("/projects");

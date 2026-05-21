@@ -8,6 +8,13 @@
       "when": 1779369878109,
       "tag": "0000_perfect_squadron_supreme",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1779371928402,
+      "tag": "0001_strange_bloodstrike",
+      "breakpoints": true
     }
   ]
 }

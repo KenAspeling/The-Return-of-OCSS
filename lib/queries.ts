@@ -1,11 +1,6 @@
 import { and, asc, desc, eq, gte, isNull, lt } from "drizzle-orm";
 import { db, schema } from "./db";
-import { ensureSeeded } from "./db/seed";
-import { DEFAULT_USER_ID } from "./constants";
-
-function init() {
-  ensureSeeded();
-}
+import { requireUser } from "./auth";
 
 export function startOfToday() {
   const d = new Date();
@@ -13,8 +8,8 @@ export function startOfToday() {
   return d;
 }
 
-export function listProjects() {
-  init();
+export async function listProjects() {
+  const user = await requireUser();
   return db
     .select({
       id: schema.projects.id,
@@ -28,23 +23,28 @@ export function listProjects() {
     })
     .from(schema.projects)
     .innerJoin(schema.clients, eq(schema.projects.clientId, schema.clients.id))
+    .where(eq(schema.clients.ownerId, user.id))
     .orderBy(asc(schema.clients.name), asc(schema.projects.name))
     .all();
 }
 
-export function listActiveProjects() {
-  return listProjects().filter((p) => p.archivedAt == null);
+export async function listActiveProjects() {
+  const all = await listProjects();
+  return all.filter((p) => p.archivedAt == null);
 }
 
-export function listClients() {
-  init();
-  return db.select().from(schema.clients).orderBy(asc(schema.clients.name)).all();
+export async function listClients() {
+  const user = await requireUser();
+  return db
+    .select()
+    .from(schema.clients)
+    .where(eq(schema.clients.ownerId, user.id))
+    .orderBy(asc(schema.clients.name))
+    .all();
 }
 
-export type EntryRow = ReturnType<typeof listEntriesSince>[number];
-
-export function listEntriesSince(since: Date) {
-  init();
+export async function listEntriesSince(since: Date) {
+  const user = await requireUser();
   return db
     .select({
       id: schema.timeEntries.id,
@@ -63,17 +63,15 @@ export function listEntriesSince(since: Date) {
     .innerJoin(schema.projects, eq(schema.timeEntries.projectId, schema.projects.id))
     .innerJoin(schema.clients, eq(schema.projects.clientId, schema.clients.id))
     .leftJoin(schema.tasks, eq(schema.timeEntries.taskId, schema.tasks.id))
-    .where(
-      and(eq(schema.timeEntries.userId, DEFAULT_USER_ID), gte(schema.timeEntries.startedAt, since)),
-    )
+    .where(and(eq(schema.timeEntries.userId, user.id), gte(schema.timeEntries.startedAt, since)))
     .orderBy(desc(schema.timeEntries.startedAt))
     .all();
 }
 
-export function listEntriesBetween(from: Date, to: Date, clientId?: string) {
-  init();
+export async function listEntriesBetween(from: Date, to: Date, clientId?: string) {
+  const user = await requireUser();
   const where = and(
-    eq(schema.timeEntries.userId, DEFAULT_USER_ID),
+    eq(schema.timeEntries.userId, user.id),
     gte(schema.timeEntries.startedAt, from),
     lt(schema.timeEntries.startedAt, to),
     clientId ? eq(schema.clients.id, clientId) : undefined,
@@ -101,8 +99,8 @@ export function listEntriesBetween(from: Date, to: Date, clientId?: string) {
     .all();
 }
 
-export function getRunningEntry() {
-  init();
+export async function getRunningEntry() {
+  const user = await requireUser();
   return db
     .select({
       id: schema.timeEntries.id,
@@ -115,34 +113,30 @@ export function getRunningEntry() {
     .from(schema.timeEntries)
     .innerJoin(schema.projects, eq(schema.timeEntries.projectId, schema.projects.id))
     .innerJoin(schema.clients, eq(schema.projects.clientId, schema.clients.id))
-    .where(
-      and(eq(schema.timeEntries.userId, DEFAULT_USER_ID), isNull(schema.timeEntries.endedAt)),
-    )
+    .where(and(eq(schema.timeEntries.userId, user.id), isNull(schema.timeEntries.endedAt)))
     .get();
 }
 
-export function todayTotals() {
-  const entries = listEntriesSince(startOfToday());
+export async function todayTotals() {
+  const entries = await listEntriesSince(startOfToday());
   let totalSeconds = 0;
   let billableSeconds = 0;
   for (const e of entries) {
     const dur = e.durationSeconds ?? Math.floor((Date.now() - e.startedAt.getTime()) / 1000);
     totalSeconds += dur;
-    // We don't have billable on the join here; approximate as all billable for the dashboard.
     billableSeconds += dur;
   }
   return { totalSeconds, billableSeconds, count: entries.length };
 }
 
-export function weekTotal() {
+export async function weekTotal() {
+  const user = await requireUser();
   const d = startOfToday();
-  d.setDate(d.getDate() - d.getDay()); // Sunday
+  d.setDate(d.getDate() - d.getDay());
   const rows = db
     .select({ duration: schema.timeEntries.durationSeconds, started: schema.timeEntries.startedAt })
     .from(schema.timeEntries)
-    .where(
-      and(eq(schema.timeEntries.userId, DEFAULT_USER_ID), gte(schema.timeEntries.startedAt, d)),
-    )
+    .where(and(eq(schema.timeEntries.userId, user.id), gte(schema.timeEntries.startedAt, d)))
     .all();
   let total = 0;
   for (const r of rows) {
@@ -150,4 +144,3 @@ export function weekTotal() {
   }
   return total;
 }
-

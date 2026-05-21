@@ -4,8 +4,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { db, schema } from "@/lib/db";
-import { ensureSeeded } from "@/lib/db/seed";
-import { DEFAULT_USER_ID } from "@/lib/constants";
+import { requireUser } from "@/lib/auth";
 import { parseEntry } from "@/lib/parse-entry";
 import { listActiveProjects } from "@/lib/queries";
 
@@ -16,8 +15,8 @@ function refresh() {
 }
 
 export async function createEntryFromText(text: string) {
-  ensureSeeded();
-  const projects = listActiveProjects();
+  const user = await requireUser();
+  const projects = await listActiveProjects();
   const parsed = parseEntry(text, projects.map((p) => p.name));
 
   const project =
@@ -33,7 +32,7 @@ export async function createEntryFromText(text: string) {
   db.insert(schema.timeEntries)
     .values({
       id: randomUUID(),
-      userId: DEFAULT_USER_ID,
+      userId: user.id,
       projectId: project.id,
       startedAt,
       endedAt,
@@ -53,7 +52,7 @@ export async function createManualEntry(input: {
   notes?: string;
   startedAt?: Date;
 }) {
-  ensureSeeded();
+  const user = await requireUser();
   const endedAt = input.startedAt
     ? new Date(input.startedAt.getTime() + input.durationMinutes * 60_000)
     : new Date();
@@ -62,7 +61,7 @@ export async function createManualEntry(input: {
   db.insert(schema.timeEntries)
     .values({
       id: randomUUID(),
-      userId: DEFAULT_USER_ID,
+      userId: user.id,
       projectId: input.projectId,
       startedAt,
       endedAt,
@@ -76,21 +75,21 @@ export async function createManualEntry(input: {
 }
 
 export async function deleteEntry(id: string) {
+  const user = await requireUser();
   db.delete(schema.timeEntries)
-    .where(and(eq(schema.timeEntries.id, id), eq(schema.timeEntries.userId, DEFAULT_USER_ID)))
+    .where(and(eq(schema.timeEntries.id, id), eq(schema.timeEntries.userId, user.id)))
     .run();
   refresh();
 }
 
 export async function startTimer(projectId: string, notes?: string) {
-  ensureSeeded();
-  // Stop anything already running first.
+  const user = await requireUser();
   await stopTimer();
 
   db.insert(schema.timeEntries)
     .values({
       id: randomUUID(),
-      userId: DEFAULT_USER_ID,
+      userId: user.id,
       projectId,
       startedAt: new Date(),
       notes: notes ?? null,
@@ -102,12 +101,11 @@ export async function startTimer(projectId: string, notes?: string) {
 }
 
 export async function stopTimer() {
+  const user = await requireUser();
   const running = db
     .select()
     .from(schema.timeEntries)
-    .where(
-      and(eq(schema.timeEntries.userId, DEFAULT_USER_ID), isNull(schema.timeEntries.endedAt)),
-    )
+    .where(and(eq(schema.timeEntries.userId, user.id), isNull(schema.timeEntries.endedAt)))
     .get();
 
   if (!running) return;

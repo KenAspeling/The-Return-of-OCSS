@@ -1,8 +1,10 @@
 "use server";
 
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { db, schema } from "@/lib/db";
+import { requireUser } from "@/lib/auth";
 import { listEntriesBetween } from "@/lib/queries";
 
 export type DraftItem = {
@@ -25,9 +27,9 @@ export async function previewInvoice(input: {
 }): Promise<Draft> {
   const from = new Date(input.from);
   const to = new Date(input.to);
-  to.setDate(to.getDate() + 1); // inclusive
+  to.setDate(to.getDate() + 1);
 
-  const entries = listEntriesBetween(from, to, input.clientId).filter((e) => e.billable);
+  const entries = (await listEntriesBetween(from, to, input.clientId)).filter((e) => e.billable);
 
   const grouped = new Map<string, DraftItem>();
   for (const e of entries) {
@@ -59,6 +61,14 @@ export async function createInvoice(input: {
   to: string;
   notes?: string;
 }) {
+  const user = await requireUser();
+  const owned = db
+    .select({ id: schema.clients.id })
+    .from(schema.clients)
+    .where(and(eq(schema.clients.id, input.clientId), eq(schema.clients.ownerId, user.id)))
+    .get();
+  if (!owned) throw new Error("Client not found.");
+
   const draft = await previewInvoice(input);
   if (draft.items.length === 0) throw new Error("No billable entries in this range.");
 
